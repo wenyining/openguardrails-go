@@ -720,16 +720,3 @@ Apache 2.0
 ## Contribution Guide
 
 Welcome to submit Issues and Pull Requests!
-
-## Changelog
-### v2.0.0
-- Added check_response_ctx(prompt, response) interface, to be used with check_prompt(prompt) for convenience.
-
-### v1.1.1
-- Adjusted maximum detection content length from 10000 to 1M
-
-### v1.1.0
-- Initial version release
-- Support prompt detection and conversation context detection
-- Complete error handling and retry mechanism
-- Concurrency-safe client implementation
