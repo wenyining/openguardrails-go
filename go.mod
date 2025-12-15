@@ -1,4 +1,4 @@
-module https://github.com/openguardrails/openguardrails-go
+module github.com/wenyining/openguardrails-go
 
 go 1.18
 
