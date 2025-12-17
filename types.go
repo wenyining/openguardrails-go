@@ -1,4 +1,4 @@
-package openguardrails
+package openguardrails_go
 
 // Message Message model
 type Message struct {
@@ -47,12 +47,12 @@ type GuardrailResult struct {
 
 // GuardrailResponse Guardrail API response model
 type GuardrailResponse struct {
-	ID                string           `json:"id"`                  // Request unique identifier
-	Result            *GuardrailResult `json:"result"`              // Detection result
-	OverallRiskLevel  string           `json:"overall_risk_level"`  // Overall risk level: no_risk, low_risk, medium_risk, high_risk
-	SuggestAction     string           `json:"suggest_action"`      // Suggested action: pass, reject, replace
-	SuggestAnswer     *string          `json:"suggest_answer"`      // Suggested answer content
-	Score             *float64         `json:"score"`               // Detection confidence score
+	ID               string           `json:"id"`                 // Request unique identifier
+	Result           *GuardrailResult `json:"result"`             // Detection result
+	OverallRiskLevel string           `json:"overall_risk_level"` // Overall risk level: no_risk, low_risk, medium_risk, high_risk
+	SuggestAction    string           `json:"suggest_action"`     // Suggested action: pass, reject, replace
+	SuggestAnswer    *string          `json:"suggest_answer"`     // Suggested answer content
+	Score            *float64         `json:"score"`              // Detection confidence score
 }
 
 // IsSafe Check if the content is safe

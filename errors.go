@@ -1,4 +1,4 @@
-package openguardrails
+package openguardrails_go
 
 import "fmt"
 

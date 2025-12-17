@@ -1,4 +1,4 @@
-package openguardrails
+package openguardrails_go
 
 import (
 	"context"
@@ -36,7 +36,7 @@ const (
 // Example usage:
 //
 //	client := openguardrails.NewClient("your-api-key")
-//	
+//
 //	// Check user input
 //	result, err := client.CheckPrompt(context.Background(), "用户问题")
 //	if err != nil {
@@ -80,30 +80,30 @@ func NewClientWithConfig(config *ClientConfig) *Client {
 	if config.APIKey == "" {
 		panic("API key cannot be empty")
 	}
-	
+
 	baseURL := config.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	
+
 	timeout := config.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	
+
 	maxRetries := config.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = DefaultMaxRetries
 	}
-	
+
 	client := resty.New()
 	client.SetBaseURL(baseURL)
 	client.SetTimeout(time.Duration(timeout) * time.Second)
 	client.SetHeader("Authorization", "Bearer "+config.APIKey)
 	client.SetHeader("Content-Type", "application/json")
 	client.SetHeader("User-Agent", UserAgent)
-	
+
 	return &Client{
 		client:     client,
 		maxRetries: maxRetries,
@@ -139,20 +139,20 @@ func (c *Client) createSafeResponse() *GuardrailResponse {
 // Return value:
 //   - *GuardrailResponse: Detection result, format as:
 //     {
-//       "id": "guardrails-xxx",
-//       "result": {
-//         "compliance": {
-//           "risk_level": "high_risk/medium_risk/low_risk/no_risk",
-//           "categories": ["violent crime", "sensitive political topics"]
-//         },
-//         "security": {
-//           "risk_level": "high_risk/medium_risk/low_risk/no_risk",
-//           "categories": ["prompt attack"]
-//         }
-//       },
-//       "overall_risk_level": "high_risk/medium_risk/low_risk/no_risk",
-//       "suggest_action": "pass/reject/replace",
-//       "suggest_answer": "Suggested answer content"
+//     "id": "guardrails-xxx",
+//     "result": {
+//     "compliance": {
+//     "risk_level": "high_risk/medium_risk/low_risk/no_risk",
+//     "categories": ["violent crime", "sensitive political topics"]
+//     },
+//     "security": {
+//     "risk_level": "high_risk/medium_risk/low_risk/no_risk",
+//     "categories": ["prompt attack"]
+//     }
+//     },
+//     "overall_risk_level": "high_risk/medium_risk/low_risk/no_risk",
+//     "suggest_action": "pass/reject/replace",
+//     "suggest_answer": "Suggested answer content"
 //     }
 //   - error: Error information
 //
@@ -179,6 +179,25 @@ func (c *Client) CheckPrompt(ctx context.Context, content string, userID ...stri
 
 	requestData := map[string]interface{}{
 		"input": strings.TrimSpace(content),
+	}
+
+	// Add optional userID parameter
+	if len(userID) > 0 && userID[0] != "" {
+		requestData["xxai_app_user_id"] = userID[0]
+	}
+
+	return c.makeRequestWithData(ctx, "POST", "/guardrails/input", requestData)
+}
+
+func (c *Client) CheckPromptWithModel(ctx context.Context, content, model string, userID ...string) (*GuardrailResponse, error) {
+	// If content is an empty string, return no risk
+	if strings.TrimSpace(content) == "" {
+		return c.createSafeResponse(), nil
+	}
+
+	requestData := map[string]interface{}{
+		"input": strings.TrimSpace(content),
+		"model": model,
 	}
 
 	// Add optional userID parameter
@@ -225,60 +244,109 @@ func (c *Client) CheckConversationWithModel(ctx context.Context, messages []*Mes
 	if len(messages) == 0 {
 		return nil, NewValidationError("messages cannot be empty")
 	}
-	
+
 	// Validate message format
 	var validatedMessages []*Message
 	allEmpty := true // Mark whether all content are empty
-	
+
 	for _, msg := range messages {
 		if msg == nil {
 			return nil, NewValidationError("message cannot be nil")
 		}
-		
+
 		if msg.Role != "user" && msg.Role != "system" && msg.Role != "assistant" {
 			return nil, NewValidationError("message role must be one of: user, system, assistant")
 		}
-		
-		if len(msg.Content) > 1000000 {
+
+		// 使用 getContentLength 替代原来的 len(msg.Content)
+		contentLength := getContentLength(msg.Content)
+		if contentLength > 1000000 {
 			return nil, NewValidationError("content too long (max 1000000 characters)")
 		}
-		
-		content := strings.TrimSpace(msg.Content)
+
+		// 检查是否为空内容
+		contentStr := getContentAsString(msg.Content)
+		contentTrimmed := strings.TrimSpace(contentStr)
 		// Check if there is non-empty content
-		if content != "" {
+		if contentTrimmed != "" {
 			allEmpty = false
 			// Only add non-empty messages to validatedMessages
 			validatedMessages = append(validatedMessages, &Message{
 				Role:    msg.Role,
-				Content: content,
+				Content: msg.Content,
 			})
 		}
 	}
-	
+
 	// If all messages' content are empty, return no risk
 	if allEmpty {
 		return c.createSafeResponse(), nil
 	}
-	
+
 	// Ensure at least one message
 	if len(validatedMessages) == 0 {
 		return c.createSafeResponse(), nil
 	}
-	
+
 	request := &GuardrailRequest{
 		Model:    model,
 		Messages: validatedMessages,
 	}
 
 	// Add optional userID parameter
-	if len(userID) > 0 && userID[0] != "" {
-		if request.ExtraBody == nil {
-			request.ExtraBody = make(map[string]interface{})
-		}
-		request.ExtraBody["xxai_app_user_id"] = userID[0]
-	}
+	//if len(userID) > 0 && userID[0] != "" {
+	//	if request.ExtraBody == nil {
+	//		request.ExtraBody = make(map[string]interface{})
+	//	}
+	//	request.ExtraBody["xxai_app_user_id"] = userID[0]
+	//}
 
 	return c.makeRequest(ctx, "POST", "/guardrails", request)
+}
+
+// getContentLength 计算 Message.Content 的长度
+func getContentLength(content interface{}) int {
+	switch v := content.(type) {
+	case string:
+		return len(strings.TrimSpace(v))
+	case []interface{}:
+		totalLen := 0
+		for _, item := range v {
+			totalLen += getContentLength(item)
+		}
+		return totalLen
+	case map[string]interface{}:
+		// 处理 map 类型，例如 {"type": "text", "text": "hello"}
+		if text, ok := v["text"].(string); ok {
+			return len(strings.TrimSpace(text))
+		}
+		// 对于图像等其他类型，可以按需定义长度计算规则
+		return 0
+	default:
+		// 其他类型转换为字符串后计算长度
+		return len(fmt.Sprintf("%v", v))
+	}
+}
+
+// getContentAsString 将 Content 转换为字符串表示
+func getContentAsString(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		var sb strings.Builder
+		for _, item := range v {
+			sb.WriteString(getContentAsString(item))
+		}
+		return sb.String()
+	case map[string]interface{}:
+		if text, ok := v["text"].(string); ok {
+			return text
+		}
+		return ""
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // CheckResponseCtx Check user input and model output safety - context-aware detection
@@ -431,13 +499,14 @@ func (c *Client) CheckPromptImageWithModel(ctx context.Context, prompt, image, m
 		Messages: messages,
 	}
 
+	//// Add optional userID parameter
+	//if len(userID) > 0 && userID[0] != "" {
+	//	if request.ExtraBody == nil {
+	//		request.ExtraBody = make(map[string]interface{})
+	//	}
+	//	request.ExtraBody["xxai_app_user_id"] = userID[0]
+	//}
 	// Add optional userID parameter
-	if len(userID) > 0 && userID[0] != "" {
-		if request.ExtraBody == nil {
-			request.ExtraBody = make(map[string]interface{})
-		}
-		request.ExtraBody["xxai_app_user_id"] = userID[0]
-	}
 
 	return c.makeRequest(ctx, "POST", "/guardrails", request)
 }
@@ -513,12 +582,12 @@ func (c *Client) CheckPromptImagesWithModel(ctx context.Context, prompt string, 
 	}
 
 	// Add optional userID parameter
-	if len(userID) > 0 && userID[0] != "" {
-		if request.ExtraBody == nil {
-			request.ExtraBody = make(map[string]interface{})
-		}
-		request.ExtraBody["xxai_app_user_id"] = userID[0]
-	}
+	//if len(userID) > 0 && userID[0] != "" {
+	//	if request.ExtraBody == nil {
+	//		request.ExtraBody = make(map[string]interface{})
+	//	}
+	//	request.ExtraBody["xxai_app_user_id"] = userID[0]
+	//}
 
 	return c.makeRequest(ctx, "POST", "/guardrails", request)
 }
@@ -528,20 +597,20 @@ func (c *Client) HealthCheck(ctx context.Context) (map[string]interface{}, error
 	resp, err := c.client.R().
 		SetContext(ctx).
 		Get("/guardrails/health")
-	
+
 	if err != nil {
 		return nil, NewNetworkError("health check failed", err)
 	}
-	
+
 	if resp.IsError() {
 		return nil, c.handleErrorResponse(resp)
 	}
-	
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(resp.Body(), &result); err != nil {
 		return nil, NewOpenGuardrailsError("failed to parse response", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -550,20 +619,20 @@ func (c *Client) GetModels(ctx context.Context) (map[string]interface{}, error) 
 	resp, err := c.client.R().
 		SetContext(ctx).
 		Get("/guardrails/models")
-	
+
 	if err != nil {
 		return nil, NewNetworkError("get models failed", err)
 	}
-	
+
 	if resp.IsError() {
 		return nil, c.handleErrorResponse(resp)
 	}
-	
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(resp.Body(), &result); err != nil {
 		return nil, NewOpenGuardrailsError("failed to parse response", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -575,13 +644,13 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, reque
 // makeRequestWithData Send HTTP request (generic version)
 func (c *Client) makeRequestWithData(ctx context.Context, method, endpoint string, requestData interface{}) (*GuardrailResponse, error) {
 	var lastErr error
-	
+
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		resp, err := c.client.R().
 			SetContext(ctx).
 			SetBody(requestData).
 			Post(endpoint)
-		
+
 		if err != nil {
 			lastErr = NewNetworkError("request failed", err)
 			if attempt < c.maxRetries {
@@ -590,7 +659,7 @@ func (c *Client) makeRequestWithData(ctx context.Context, method, endpoint strin
 			}
 			return nil, lastErr
 		}
-		
+
 		if resp.IsSuccess() {
 			var result GuardrailResponse
 			if err := json.Unmarshal(resp.Body(), &result); err != nil {
@@ -598,7 +667,7 @@ func (c *Client) makeRequestWithData(ctx context.Context, method, endpoint strin
 			}
 			return &result, nil
 		}
-		
+
 		// Handle HTTP error status code
 		switch resp.StatusCode() {
 		case 401:
@@ -637,7 +706,7 @@ func (c *Client) makeRequestWithData(ctx context.Context, method, endpoint strin
 			return nil, lastErr
 		}
 	}
-	
+
 	return nil, lastErr
 }
 

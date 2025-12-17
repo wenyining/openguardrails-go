@@ -1,4 +1,4 @@
-package openguardrails
+package openguardrails_go
 
 import (
 	"context"
@@ -18,7 +18,7 @@ type AsyncResult[T any] struct {
 //
 //	asyncClient := openguardrails.NewAsyncClient("your-api-key")
 //	defer asyncClient.Close()
-//	
+//
 //	// Async check prompt
 //	resultChan := asyncClient.CheckPromptAsync(ctx, "User question")
 //	select {
@@ -31,7 +31,7 @@ type AsyncResult[T any] struct {
 //	case <-ctx.Done():
 //		fmt.Println("Check prompt timeout")
 //	}
-//	
+//
 //	// Batch async check
 //	contents := []string{"Content 1", "Content 2", "Content 3"}
 //	results := asyncClient.BatchCheckPrompts(ctx, contents)
@@ -65,7 +65,7 @@ func NewAsyncClientWithConfig(config *ClientConfig, maxConcurrency int) *AsyncCl
 	if maxConcurrency <= 0 {
 		maxConcurrency = 10
 	}
-	
+
 	return &AsyncClient{
 		client:     NewClientWithConfig(config),
 		workerPool: make(chan struct{}, maxConcurrency),
@@ -103,7 +103,7 @@ func (ac *AsyncClient) CheckPromptAsync(ctx context.Context, content string) <-c
 // CheckPromptWithModelAsync Async check prompt safety, specify model
 func (ac *AsyncClient) CheckPromptWithModelAsync(ctx context.Context, content, model string) <-chan AsyncResult[*GuardrailResponse] {
 	resultChan := make(chan AsyncResult[*GuardrailResponse], 1)
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -112,12 +112,12 @@ func (ac *AsyncClient) CheckPromptWithModelAsync(ctx context.Context, content, m
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	ac.wg.Add(1)
 	go func() {
 		defer ac.wg.Done()
 		defer close(resultChan)
-		
+
 		// Get worker slot
 		select {
 		case ac.workerPool <- struct{}{}:
@@ -126,12 +126,12 @@ func (ac *AsyncClient) CheckPromptWithModelAsync(ctx context.Context, content, m
 			resultChan <- AsyncResult[*GuardrailResponse]{Error: ctx.Err()}
 			return
 		}
-		
+
 		// Execute detection
 		result, err := ac.client.CheckPromptWithModel(ctx, content, model)
 		resultChan <- AsyncResult[*GuardrailResponse]{Result: result, Error: err}
 	}()
-	
+
 	return resultChan
 }
 
@@ -166,7 +166,7 @@ func (ac *AsyncClient) CheckConversationAsync(ctx context.Context, messages []*M
 // CheckConversationWithModelAsync Async check conversation context safety, specify model
 func (ac *AsyncClient) CheckConversationWithModelAsync(ctx context.Context, messages []*Message, model string) <-chan AsyncResult[*GuardrailResponse] {
 	resultChan := make(chan AsyncResult[*GuardrailResponse], 1)
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -175,12 +175,12 @@ func (ac *AsyncClient) CheckConversationWithModelAsync(ctx context.Context, mess
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	ac.wg.Add(1)
 	go func() {
 		defer ac.wg.Done()
 		defer close(resultChan)
-		
+
 		// Get worker slot
 		select {
 		case ac.workerPool <- struct{}{}:
@@ -189,12 +189,12 @@ func (ac *AsyncClient) CheckConversationWithModelAsync(ctx context.Context, mess
 			resultChan <- AsyncResult[*GuardrailResponse]{Error: ctx.Err()}
 			return
 		}
-		
+
 		// Execute detection
 		result, err := ac.client.CheckConversationWithModel(ctx, messages, model)
 		resultChan <- AsyncResult[*GuardrailResponse]{Result: result, Error: err}
 	}()
-	
+
 	return resultChan
 }
 
@@ -225,7 +225,7 @@ func (ac *AsyncClient) BatchCheckPrompts(ctx context.Context, contents []string)
 // BatchCheckPromptsWithModel Batch async check prompt, specify model
 func (ac *AsyncClient) BatchCheckPromptsWithModel(ctx context.Context, contents []string, model string) <-chan AsyncResult[*GuardrailResponse] {
 	resultChan := make(chan AsyncResult[*GuardrailResponse])
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -238,19 +238,19 @@ func (ac *AsyncClient) BatchCheckPromptsWithModel(ctx context.Context, contents 
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	go func() {
 		defer close(resultChan)
-		
+
 		// Create result collector, keep order
 		results := make([]AsyncResult[*GuardrailResponse], len(contents))
 		var wg sync.WaitGroup
-		
+
 		for i, content := range contents {
 			wg.Add(1)
 			go func(index int, content string) {
 				defer wg.Done()
-				
+
 				// Get worker slot
 				select {
 				case ac.workerPool <- struct{}{}:
@@ -259,15 +259,15 @@ func (ac *AsyncClient) BatchCheckPromptsWithModel(ctx context.Context, contents 
 					results[index] = AsyncResult[*GuardrailResponse]{Error: ctx.Err()}
 					return
 				}
-				
+
 				// Execute detection
 				result, err := ac.client.CheckPromptWithModel(ctx, content, model)
 				results[index] = AsyncResult[*GuardrailResponse]{Result: result, Error: err}
 			}(i, content)
 		}
-		
+
 		wg.Wait()
-		
+
 		// Send results in order
 		for _, result := range results {
 			select {
@@ -277,7 +277,7 @@ func (ac *AsyncClient) BatchCheckPromptsWithModel(ctx context.Context, contents 
 			}
 		}
 	}()
-	
+
 	return resultChan
 }
 
@@ -311,7 +311,7 @@ func (ac *AsyncClient) BatchCheckConversations(ctx context.Context, conversation
 // BatchCheckConversationsWithModel Batch async check conversation, specify model
 func (ac *AsyncClient) BatchCheckConversationsWithModel(ctx context.Context, conversations [][]*Message, model string) <-chan AsyncResult[*GuardrailResponse] {
 	resultChan := make(chan AsyncResult[*GuardrailResponse])
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -324,19 +324,19 @@ func (ac *AsyncClient) BatchCheckConversationsWithModel(ctx context.Context, con
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	go func() {
 		defer close(resultChan)
-		
+
 		// Create result collector, keep order
 		results := make([]AsyncResult[*GuardrailResponse], len(conversations))
 		var wg sync.WaitGroup
-		
+
 		for i, messages := range conversations {
 			wg.Add(1)
 			go func(index int, messages []*Message) {
 				defer wg.Done()
-				
+
 				// Get worker slot
 				select {
 				case ac.workerPool <- struct{}{}:
@@ -345,15 +345,15 @@ func (ac *AsyncClient) BatchCheckConversationsWithModel(ctx context.Context, con
 					results[index] = AsyncResult[*GuardrailResponse]{Error: ctx.Err()}
 					return
 				}
-				
+
 				// Execute detection
 				result, err := ac.client.CheckConversationWithModel(ctx, messages, model)
 				results[index] = AsyncResult[*GuardrailResponse]{Result: result, Error: err}
 			}(i, messages)
 		}
-		
+
 		wg.Wait()
-		
+
 		// Send results in order
 		for _, result := range results {
 			select {
@@ -363,14 +363,14 @@ func (ac *AsyncClient) BatchCheckConversationsWithModel(ctx context.Context, con
 			}
 		}
 	}()
-	
+
 	return resultChan
 }
 
 // HealthCheckAsync Async check API service health status
 func (ac *AsyncClient) HealthCheckAsync(ctx context.Context) <-chan AsyncResult[map[string]interface{}] {
 	resultChan := make(chan AsyncResult[map[string]interface{}], 1)
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -379,23 +379,23 @@ func (ac *AsyncClient) HealthCheckAsync(ctx context.Context) <-chan AsyncResult[
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	ac.wg.Add(1)
 	go func() {
 		defer ac.wg.Done()
 		defer close(resultChan)
-		
+
 		result, err := ac.client.HealthCheck(ctx)
 		resultChan <- AsyncResult[map[string]interface{}]{Result: result, Error: err}
 	}()
-	
+
 	return resultChan
 }
 
 // GetModelsAsync Async get available model list
 func (ac *AsyncClient) GetModelsAsync(ctx context.Context) <-chan AsyncResult[map[string]interface{}] {
 	resultChan := make(chan AsyncResult[map[string]interface{}], 1)
-	
+
 	ac.closeMu.RLock()
 	if ac.closed {
 		ac.closeMu.RUnlock()
@@ -404,16 +404,16 @@ func (ac *AsyncClient) GetModelsAsync(ctx context.Context) <-chan AsyncResult[ma
 		return resultChan
 	}
 	ac.closeMu.RUnlock()
-	
+
 	ac.wg.Add(1)
 	go func() {
 		defer ac.wg.Done()
 		defer close(resultChan)
-		
+
 		result, err := ac.client.GetModels(ctx)
 		resultChan <- AsyncResult[map[string]interface{}]{Result: result, Error: err}
 	}()
-	
+
 	return resultChan
 }
 
@@ -426,13 +426,13 @@ func (ac *AsyncClient) Close() error {
 	}
 	ac.closed = true
 	ac.closeMu.Unlock()
-	
+
 	// Wait for all goroutines to complete
 	ac.wg.Wait()
-	
+
 	// Close worker pool
 	close(ac.workerPool)
-	
+
 	return nil
 }
 
