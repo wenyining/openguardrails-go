@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,7 +71,6 @@ type Client struct {
 func NewClient(apiKey string) *Client {
 	return NewClientWithConfig(&ClientConfig{
 		APIKey:     apiKey,
-		BaseURL:    DefaultBaseURL,
 		Timeout:    DefaultTimeout,
 		MaxRetries: DefaultMaxRetries,
 	})
@@ -83,7 +84,12 @@ func NewClientWithConfig(config *ClientConfig) *Client {
 
 	baseURL := config.BaseURL
 	if baseURL == "" {
-		baseURL = DefaultBaseURL
+		// 优先使用环境变量，否则使用默认值
+		if envURL := os.Getenv("OPENGUARDRAILS_BASE_URL"); envURL != "" {
+			baseURL = envURL
+		} else {
+			baseURL = DefaultBaseURL
+		}
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
@@ -259,13 +265,13 @@ func (c *Client) CheckConversationWithModel(ctx context.Context, messages []*Mes
 		}
 
 		// 使用 getContentLength 替代原来的 len(msg.Content)
-		contentLength := getContentLength(msg.Content)
+		contentLength := getContentLength(msg.Content, 0)
 		if contentLength > 1000000 {
 			return nil, NewValidationError("content too long (max 1000000 characters)")
 		}
 
 		// 检查是否为空内容
-		contentStr := getContentAsString(msg.Content)
+		contentStr := getContentAsString(msg.Content, 0)
 		contentTrimmed := strings.TrimSpace(contentStr)
 		// Check if there is non-empty content
 		if contentTrimmed != "" {
@@ -305,14 +311,17 @@ func (c *Client) CheckConversationWithModel(ctx context.Context, messages []*Mes
 }
 
 // getContentLength 计算 Message.Content 的长度
-func getContentLength(content interface{}) int {
+func getContentLength(content interface{}, depth int) int {
+	if depth >= 10 { // 最大递归层数限制
+		return 0
+	}
 	switch v := content.(type) {
 	case string:
 		return len(strings.TrimSpace(v))
 	case []interface{}:
 		totalLen := 0
 		for _, item := range v {
-			totalLen += getContentLength(item)
+			totalLen += getContentLength(item, depth+1)
 		}
 		return totalLen
 	case map[string]interface{}:
@@ -329,14 +338,17 @@ func getContentLength(content interface{}) int {
 }
 
 // getContentAsString 将 Content 转换为字符串表示
-func getContentAsString(content interface{}) string {
+func getContentAsString(content interface{}, depth int) string {
+	if depth >= 10 { // 最大递归层数限制
+		return ""
+	}
 	switch v := content.(type) {
 	case string:
 		return v
 	case []interface{}:
 		var sb strings.Builder
 		for _, item := range v {
-			sb.WriteString(getContentAsString(item))
+			sb.WriteString(getContentAsString(item, depth+1))
 		}
 		return sb.String()
 	case map[string]interface{}:
@@ -398,9 +410,14 @@ func (c *Client) CheckResponseCtx(ctx context.Context, prompt, response string, 
 
 // encodeBase64FromPath Encode image to base64 format
 func (c *Client) encodeBase64FromPath(imagePath string) (string, error) {
+	var data []byte
+	var err error
+
 	if strings.HasPrefix(imagePath, "http://") || strings.HasPrefix(imagePath, "https://") {
-		// Get image from URL
-		resp, err := http.Get(imagePath)
+		// Get image from URL with timeout
+		client := &http.Client{Timeout: 30 * time.Second}
+		req, _ := http.NewRequestWithContext(context.Background(), "GET", imagePath, nil)
+		resp, err := client.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("failed to fetch image from URL: %w", err)
 		}
@@ -410,18 +427,16 @@ func (c *Client) encodeBase64FromPath(imagePath string) (string, error) {
 			return "", fmt.Errorf("failed to fetch image: status %d", resp.StatusCode)
 		}
 
-		data, err := io.ReadAll(resp.Body)
+		data, err = io.ReadAll(resp.Body)
 		if err != nil {
 			return "", fmt.Errorf("failed to read image data: %w", err)
 		}
-
-		return base64.StdEncoding.EncodeToString(data), nil
-	}
-
-	// Read image from local file
-	data, err := os.ReadFile(imagePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read image file: %w", err)
+	} else {
+		// Read image from local file
+		data, err = os.ReadFile(imagePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read image file: %w", err)
+		}
 	}
 
 	return base64.StdEncoding.EncodeToString(data), nil
@@ -472,6 +487,12 @@ func (c *Client) CheckPromptImageWithModel(ctx context.Context, prompt, image, m
 		return nil, NewOpenGuardrailsError(fmt.Sprintf("failed to encode image: %v", err), err)
 	}
 
+	ext := filepath.Ext(image)
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		mimeType = "image/jpeg" // fallback
+	}
+
 	// Build message content
 	content := []interface{}{}
 	if strings.TrimSpace(prompt) != "" {
@@ -483,7 +504,7 @@ func (c *Client) CheckPromptImageWithModel(ctx context.Context, prompt, image, m
 	content = append(content, map[string]interface{}{
 		"type": "image_url",
 		"image_url": map[string]string{
-			"url": fmt.Sprintf("data:image/jpeg;base64,%s", imageBase64),
+			"url": fmt.Sprintf("data:%s;base64,%s", mimeType, imageBase64),
 		},
 	})
 
@@ -561,10 +582,16 @@ func (c *Client) CheckPromptImagesWithModel(ctx context.Context, prompt string, 
 			return nil, NewOpenGuardrailsError(fmt.Sprintf("failed to encode image %s: %v", imagePath, err), err)
 		}
 
+		ext := filepath.Ext(imagePath)
+		mimeType := mime.TypeByExtension(ext)
+		if mimeType == "" {
+			mimeType = "image/jpeg" // fallback
+		}
+
 		content = append(content, map[string]interface{}{
 			"type": "image_url",
 			"image_url": map[string]string{
-				"url": fmt.Sprintf("data:image/jpeg;base64,%s", imageBase64),
+				"url": fmt.Sprintf("data:%s;base64,%s", mimeType, imageBase64),
 			},
 		})
 	}
@@ -646,10 +673,15 @@ func (c *Client) makeRequestWithData(ctx context.Context, method, endpoint strin
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
-		resp, err := c.client.R().
+		//resp, err := c.client.R().
+		//	SetContext(ctx).
+		//	SetBody(requestData).
+		//	Post(endpoint)
+		req := c.client.R().
 			SetContext(ctx).
-			SetBody(requestData).
-			Post(endpoint)
+			SetBody(requestData)
+
+		resp, err := req.Post(endpoint)
 
 		if err != nil {
 			lastErr = NewNetworkError("request failed", err)
